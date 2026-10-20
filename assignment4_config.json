@@ -1,0 +1,47 @@
+{
+  "protocol_version": "1.0-frozen",
+  "seed": 20261017,
+  "n_tasks": 100,
+  "smoke_tasks": 25,
+  "max_cycles": 10,
+  "max_new_tokens": 1024,
+  "temperature": 0.0,
+  "top_p": 1.0,
+  "batch_size": 1,
+  "system_prompt": null,
+  "chat_template": "model_repository_tokenizer.apply_chat_template(add_generation_prompt=true)",
+  "cloud": {
+    "accelerator": "NVIDIA L4 24GB",
+    "zone": "us-central1-a",
+    "planned_provisioning": "Spot",
+    "actual_provisioning": "Spot, then standard after preemptions",
+    "hard_budget_usd": 10.0,
+    "max_gpu_hours": 20.0
+  },
+  "models": [
+    {
+      "model_id": "qwen2.5-coder-7b-instruct",
+      "hf_repo": "Qwen/Qwen2.5-Coder-7B-Instruct",
+      "revision": "c03e6d358207e414f1eca0bb1891e29f1db0e242",
+      "baseline_file": "qwen2.5-coder-7b-instruct.json"
+    },
+    {
+      "model_id": "codeqwen1.5-7b-chat",
+      "hf_repo": "Qwen/CodeQwen1.5-7B-Chat",
+      "revision": "7b0cc3380fe815e6f08fe2f80c03e05a8b1883d8",
+      "baseline_file": "codeqwen1.5-7b-chat.json"
+    },
+    {
+      "model_id": "opencoder-8b-instruct",
+      "hf_repo": "infly/OpenCoder-8B-Instruct",
+      "revision": "01badbbf10c2dfd7e2a0b5f570065ef44548576c",
+      "baseline_file": "opencoder-8b-instruct.json",
+      "trust_remote_code": true
+    }
+  ],
+  "principal_arms": [
+    "english-control",
+    "spanish"
+  ],
+  "derived_baseline_arm": "standard-supplied-derived"
+}

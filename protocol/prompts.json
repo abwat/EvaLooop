@@ -1,0 +1,9 @@
+{
+  "generation": "Generate Python code for the following task:\n\n{description}\n\nReturn only the code, without explanations or comments.",
+  "standard_summary": "Summarize what the following code does in a detailed description:\n\n```\n{code}\n```\n\nReturn only the summary, without explanations or comments.",
+  "control_summary_template": "Summarize what the following code does in a detailed {language} description. Preserve every behavioral requirement, edge case, input/output constraint, and function-signature requirement.\n\n```\n{code}\n```\n\nReturn only the summary in {language}, without explanations, comments, or code.",
+  "english_control_summary": "Summarize what the following code does in a detailed English description. Preserve every behavioral requirement, edge case, input/output constraint, and function-signature requirement.\n\n```\n{code}\n```\n\nReturn only the summary in English, without explanations, comments, or code.",
+  "spanish_summary": "Summarize what the following code does in a detailed Spanish description. Preserve every behavioral requirement, edge case, input/output constraint, and function-signature requirement.\n\n```\n{code}\n```\n\nReturn only the summary in Spanish, without explanations, comments, or code.",
+  "next_cycle_wrapper": "\"\"\"\n{summary}\n{original_assert_line}\n\"\"\"\n",
+  "assertion_rule": "Retain the last assert line from the original task prompt."
+}

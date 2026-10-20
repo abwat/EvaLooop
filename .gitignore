@@ -30,6 +30,7 @@ env/
 ENV/
 .env
 .venv
+.venv/
 env.bak/
 venv.bak/
 
@@ -55,10 +56,12 @@ coverage.xml
 
 # Jupyter Notebook
 .ipynb_checkpoints
+.ipynb_checkpoints/
 
 # Data files
 data/*
 !data/.gitkeep
+assignment2-data/
 
 # Logs
 logs/*
@@ -97,3 +100,6 @@ package.json
 
 # Results
 results/*
+analysis_assignment4/
+tmp/
+*.tmp

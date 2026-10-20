@@ -1,451 +1,195 @@
-# EvaLooop: LLM Robustness Evaluation Framework
+# Assignment 4: Spanish summaries in EvaLoop
 
-[![arXiv](https://img.shields.io/badge/arXiv-2505.12185-b31b1b.svg)](https://arxiv.org/abs/2505.12185)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Leaderboard](https://img.shields.io/badge/leaderboard-evalooop.github.io-blue)](https://evalooop.github.io/)
+Public fork: https://github.com/abwat/EvaLooop
+Assignment branch: https://github.com/abwat/EvaLooop/tree/assignment4
 
-EvaLoop is a framework for evaluating the robustness of Large Language Models (LLMs) through iterative dual-task cycles. The framework measures how many cycles an LLM can execute before generating code that fails functional testing, providing a quantitative metric for model robustness. It accompanies the paper [*EvaLoop: Assessing LLM Robustness in Programming from a Self-consistency Perspective*](https://arxiv.org/abs/2505.12185); results across models are published on the [leaderboard](https://evalooop.github.io/).
+Upstream: https://github.com/evalooop/EvaLooop, branch `dev`.
+Patch base commit: `ce22fe2f80c8f36da85cc8a0cca49c2bcc8b1cb9`.
+The fork was verified as public and as a fork of `evalooop/EvaLooop` on 20 October 2026.
 
-## 🚀 Quick Start
+## Question
 
-### Installation
+Does requiring Spanish intermediate summaries change Average Sustainable Loops (ASL) after
+controlling for the wording of the summary prompt?
 
-EvaLoop is not yet published on PyPI — install from source:
+I compare three conditions on the same 100 MBPP+ tasks:
 
-```bash
-git clone https://github.com/evalooop/EvaLooop
-cd EvaLooop
-pip install -e .
-```
+1. `standard-supplied-derived`: the supplied EvaLoop records, restricted to the selected tasks;
+2. `english-control`: a detail-preserving summary prompt in English; and
+3. `spanish`: the same prompt with Spanish as the requested output language.
 
-Optional extras:
+The English and Spanish runs use three models. Each task stops at the first failed Base or Plus
+test, or after ten passing cycles. Model revisions and inference settings are recorded in
+`assignment4_config.json` and `PROTOCOL_ASSIGNMENT4.md`.
 
-```bash
-pip install -e ".[vllm]"   # GPU batch inference via vLLM (Linux + CUDA only)
-pip install -e ".[dev]"    # development tools (pytest, ruff, ...)
-```
+## Files
 
-After installing, check your environment:
+- `report.pdf`: three-page report.
+- `summary.csv`: six performed runs; byte-identical working copy in `analysis_assignment4/`.
+- `task_ids.json`: the 100 evaluated task IDs, in run order.
+- `protocol/task_order.json`: the full seeded permutation and selected subsets.
+- `protocol/prompts.json`: exact generation, summary, and wrapper templates exported from the extension.
+- `analysis_assignment4/baseline_summary.csv`: three aggregate historical comparisons.
+- `analysis_assignment4/baseline_record_references.json`: supplied model, task, and cycle references.
+- `results/`: six new runs. Supplied per-cycle records are not copied into the archive.
+- `analysis_assignment4/comparisons.json`: paired effects, confidence intervals, tests, and
+  language checks.
+- `analysis_assignment4/failure_analysis_sample.csv`: 20 Spanish-loop failures manually reviewed by the author on 20 October 2026, following AI-assisted draft coding.
+- `Assignment4_Cloud_Run.ipynb`: cloud commands used for the experiment.
+- `assignment4.patch`: changes relative to `evalooop/EvaLooop` branch `dev`.
+- `evaloop/extensions/`, `scripts/`, and `tests/`: implementation and tests.
 
-```bash
-evaloop validate_setup                    # full check
-evaloop validate_setup --check_gpu=False  # skip GPU checks (e.g. on a laptop)
-```
+The private `assignment2-data` directory is not included.
 
-### Basic Usage
+## Environment
 
-```bash
-# Evaluate an OpenAI model on the generation<->summarization loop
-evaloop evaluate --model "gpt-4"
+The accepted runs used a Google Cloud `g2-standard-4` VM with one NVIDIA L4 in
+`us-central1-a`. The VM began as Spot and was later changed to standard provisioning after
+preemptions. Inference used BF16, batch size 1, greedy decoding, repository chat templates, no
+system prompt, a 1,024-token output cap, and ten cycles.
 
-# Evaluate an open-source model with multi-GPU vLLM
-evaloop evaluate --model "Qwen/Qwen2.5-Coder-32B-Instruct" \
-                 --gpu_ids "0,1,2,3" \
-                 --tensor_parallel_size 4 \
-                 --max_cycles 15
-
-# Analyze results (the default ASL metric calls an LLM judge; see "Scoring")
-evaloop analyze --results_path "results/experiment_results.json" \
-                --judge_api_key_file api.key
-```
-
-## 🔄 How the Loop Works
-
-Each evaluation cycle alternates between two tasks:
-
-1. **Initial input**: a natural-language prompt describing a coding task (from MBPP+), formatted as a docstring whose final line is an `assert` statement.
-2. **Code generation**: the model generates code from the prompt.
-3. **Functional testing**: the generated code is executed against the dataset's test cases ([EvalPlus](https://github.com/evalplus/evalplus) MBPP+).
-4. **Code summarization**: the model summarizes the generated code back into a natural-language description.
-5. **Iteration**: the summary becomes the next cycle's prompt; the loop repeats until the generated code fails testing or `--max_cycles` is reached.
-
-The number of loops each task survives is aggregated into the **ASL (Average Sustainable Loops)** score, which weights long survival quadratically and discounts semantic drift at the failure boundary; see [Scoring](#-scoring).
-
-### Design note: the retained assert line
-
-The summarization step deliberately re-attaches the final `assert` line from the prompt the cycle *started* with, so each new prompt looks like:
-
-```
-"""
-<model-generated summary>
-assert similar_elements((3, 4, 5, 6),(5, 7, 4, 10)) == (4, 5)
-"""
-```
-
-This is intentional, not an artifact: keeping one assert anchors the function name and signature across cycles, so the loop measures **semantic drift** in the model's understanding rather than trivial failures from a renamed function. You will see this line in every generated prompt in the result data. The implementation lives in `CodeSummarizationTask.postprocess` (`evaloop/tasks/code_summarization.py`).
-
-### Supported Task Types
-
-| Task type | Config name | Status |
-|---|---|---|
-| Code generation | `code_generation` | ✅ Supported |
-| Code summarization | `code_summarization` | ✅ Supported |
-| Code translation | `code_translation` | 🧪 Experimental — the task class exists, but config/evaluator support is not yet in the public release (`run_code_translation()` raises `NotImplementedError`) |
-
-Want to add your own loop? A new task type is one new file plus a registry entry — no changes to the loop runner. See the [Contributing Guide](CONTRIBUTING.md).
-
-## 🛠️ CLI Reference
-
-### `evaluate` — Code Generation ↔ Summarization
+Install the experiment requirements from an EvaLoop checkout:
 
 ```bash
-evaloop evaluate --model MODEL [OPTIONS]
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-assignment4-cloud.txt
+python -m pip install -e .
+python -m pytest -q
 ```
 
-**Key options:**
-- `--model`: A single model name or HuggingFace path (required). Examples: `"gpt-4"`, `"Qwen/Qwen2.5-Coder-32B-Instruct"`
-- `--dataset`: Dataset to use. Currently only `mbpp_plus` is supported (HumanEval is planned).
-- `--max_cycles`: Maximum evaluation cycles (default: 10)
-- `--temperature`: Generation temperature (default: 0.0)
-- `--output_dir`: Results output directory (default: `results/`)
-- `--gpu_ids`: GPU IDs for vLLM models (e.g., `"0,1,2,3"`)
-- `--tensor_parallel_size`: GPUs for tensor parallelism (default: 1)
+The cloud run recorded 84 passing tests.
 
-**Examples:**
+The model revisions are fixed rather than resolved from changing repository heads:
+
+| Model repository | Revision |
+|---|---|
+| Qwen/Qwen2.5-Coder-7B-Instruct | `c03e6d358207e414f1eca0bb1891e29f1db0e242` |
+| Qwen/CodeQwen1.5-7B-Chat | `7b0cc3380fe815e6f08fe2f80c03e05a8b1883d8` |
+| infly/OpenCoder-8B-Instruct | `01badbbf10c2dfd7e2a0b5f570065ef44548576c` |
+
+The source files in this ZIP overlay an upstream checkout. For a clean installation, check out
+the base commit above, apply `assignment4.patch`, and then install the requirements. The
+environment needs Python 3.10+, a CUDA-compatible PyTorch installation, Transformers 4.57.6,
+EvalPlus 0.3.1, Lingua 2.0.2, and the other dependencies in the requirements file. Full analysis
+requires SciPy; the summary-only rebuild needs only Python's standard library.
+
+To reproduce an inference configuration on a dedicated CUDA VM, choose one model ID from
+`assignment4_config.json` and run both arms. For example:
 
 ```bash
-# Basic OpenAI evaluation
-evaloop evaluate --model "gpt-4"
-
-# Large model with multi-GPU setup
-evaloop evaluate --model "meta-llama/Llama-3-70b-instruct-hf" \
-                 --gpu_ids "0,1,2,3" \
-                 --tensor_parallel_size 4 \
-                 --gpu_memory_utilization 0.85
-
-# Custom experiment parameters
-evaloop evaluate --model "deepseek-coder-33b" \
-                 --max_cycles 20 \
-                 --temperature 0.2 \
-                 --experiment_name "deepseek_robust_eval"
+python scripts/run_assignment4.py --model-id qwen2.5-coder-7b-instruct \
+  --arm english-control --n-tasks 100 --max-cycles 10 --max-new-tokens 1024
+python scripts/run_assignment4.py --model-id qwen2.5-coder-7b-instruct \
+  --arm spanish --n-tasks 100 --max-cycles 10 --max-new-tokens 1024
 ```
 
-To evaluate several models, run `evaloop evaluate` once per model (see [Batch Processing](#batch-processing)).
+Repeat with `codeqwen1.5-7b-chat` and `opencoder-8b-instruct` for all six configurations.
+These commands perform inference; they are unnecessary for rebuilding archived numbers.
 
-### `analyze` — Result Analysis
+Generated programs were tested on the dedicated Google Cloud evaluation VM through the
+upstream EvalPlus tester, with process isolation and execution limits. They were not executed
+on the author's personal machine. EvalPlus's reliability guard is not a complete security sandbox;
+the cloud VM provided the separation from local personal files.
+The saved experiment records do not establish the VM service-account permissions, metadata
+access, or credentials available to generated programs. No claim of credential-free execution
+is made. Reproduction should use a disposable VM without privileged service accounts or personal
+credentials, with resource permissions and network access restricted before testing.
+
+## Rebuild the analysis
+
+Rebuild the six-run `summary.csv` using only the six archived result JSONs, configuration,
+task order, and Python's standard library. No course package, GPU, SciPy, or model access is needed:
 
 ```bash
-evaloop analyze --results_path "results/experiment_results.json" [OPTIONS]
+python scripts/analyze_assignment4.py --summary-only
+python scripts/analyze_assignment4.py --summary-only --output-dir .
+python scripts/export_submission_metadata.py
+python tests/test_summary_rebuild.py
 ```
 
-**Key options:**
-- `--results_path`: Path to results JSON file (required)
-- `--metrics`: Metrics to compute (default: `"ASL,ASL_pow,ASL_bias,pass@1,pass_drop"`, see [Scoring](#-scoring))
-- `--generate_plots`: Generate visualization plots (default: True)
-- `--output_dir`: Analysis output directory (default: `<results dir>/analysis`)
-- `--max_cycles`: Loop budget M of the run (default: value recorded in the results file; for older
-  files, the value implied by tasks flagged `max_cycles_reached`; else 10 with a warning)
-
-**Similarity judge options** (only used by the `ASL` metric, and only for pairs not cached yet):
-- `--judge_model`: Judge model id (default: `gpt-4-turbo-2024-04-09`, the paper's judge)
-- `--judge_api_key` / `--judge_api_key_file`: Judge API key (default: `OPENAI_API_KEY`)
-- `--judge_base_url`: Any OpenAI-compatible endpoint, e.g. a local `vllm serve` server (default: OpenAI)
-- `--judge_max_tokens`: Answer token budget (default: 10; raise it for reasoning models)
-- `--judge_temperature`: Judge temperature (default: 0.0)
-- `--judge_system_prompt`: Optional system message (default: none)
-- `--judge_prompt_file`: Custom prompt template with `{prompt1}`, `{code1}`, `{prompt2}`, `{code2}`
-- `--judge_delay`: Seconds between judge calls (default: 0)
-- `--similarity_path`: Similarity sidecar to read and extend (default: next to the results file)
-- `--rejudge_failed`: Retry pairs whose previous judge call failed (default: True)
-
-**Examples:**
+The isolated test disables site packages and confirms a byte-identical six-row summary.
+It also checks that an incomplete run is rejected. Baseline rebuilding additionally needs
+the private course package. Place `assignment2-data` beside the checkout, then run:
 
 ```bash
-# Default analysis: all metrics, paper judge (needs an OpenAI key the first time)
-evaloop analyze --results_path "results/my_experiment_results.json" --judge_api_key_file api.key
-
-# Use a self-hosted judge through vLLM's OpenAI-compatible server
-vllm serve Qwen/Qwen2.5-72B-Instruct --port 8000
-evaloop analyze --results_path "results/exp.json" \
-                 --judge_model "Qwen/Qwen2.5-72B-Instruct" \
-                 --judge_base_url "http://localhost:8000/v1"
-
-# Skip the judge: metrics that only need the loop counts
-evaloop analyze --results_path "results/exp.json" \
-                 --metrics "ASL_pow,ASL_bias,pass@1,pass_drop" \
-                 --output_dir "analysis/custom/"
+python scripts/analyze_assignment4.py \
+  --data-dir ../assignment2-data \
+  --results-dir results \
+  --output-dir analysis_assignment4
+python scripts/code_failure_analysis.py
+python scripts/analyze_assignment4.py --summary-only --output-dir .
 ```
 
-**Outputs** (in `--output_dir`): `analysis_results.json` (all metric values per model, the loop
-histogram `n_i`, and judge statistics such as the bucket weights `s_i`), `analysis_summary.txt`,
-and the plots. Judge scores go to the similarity sidecar next to the results file.
+The first command rebuilds the six-row `summary.csv`, the three-row `baseline_summary.csv`,
+baseline references, `comparisons.json`, and the seeded failure sample. Baseline records are
+read in memory from the course package. The second command reapplies the author-reviewed Spanish codes
+and their review metadata.
 
-### `list_models` — Available Models
+`comparisons.json` also reports shorter/equal/longer task counts, cycle-1 disagreement with
+the supplied records, and capped/total generations per arm. These checks use saved results
+and require no new inference.
+
+## Post-run audits
+
+`POST_RUN_AUDIT.md` documents the retrospective sampling, coding rubric, AI assistance,
+planning history, and cost evidence. The additional files are:
+
+- `baseline_failure_audit.csv`: ten English-control and ten standard-loop failures, with references and rationales;
+- `failure_mode_comparison.csv`: the three descriptive label distributions;
+- `language_audit.csv`: 30 summaries from distinct task IDs within each model;
+- `truncation_sensitivity.json`: effects after excluding task pairs with capped generations.
+
+These files are under `analysis_assignment4/`. Codex (GPT-6) drafted qualitative labels.
+The author manually reviewed the 20 Spanish failure samples on 20 October 2026 and retained
+their labels. The ten English-control failures, ten standard failures, and 30 language samples
+remain AI-assisted supplementary checks without recorded human confirmation. The audit document
+contains the prompts, decision rules, review status, and ambiguous cases. Incremental API cost
+was $0; subscription cost per example and exact decoding settings are unavailable.
+Quantitative scores never use these labels.
+
+Rebuild the recorded audits and sensitivity check without new inference:
 
 ```bash
-evaloop list_models
+python scripts/posthoc_audit.py
+python scripts/posthoc_audit.py --export-audits --data-dir ../assignment2-data
 ```
 
-### `validate_setup` — System Validation
-
-```bash
-evaloop validate_setup [--check_gpu=False] [--check_api_keys=False]
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-
-```bash
-export OPENAI_API_KEY="your-openai-api-key"
-export ANTHROPIC_API_KEY="your-anthropic-api-key"  # Optional
-```
-
-### Model Configuration
-
-EvaLoop automatically configures models based on their names/paths:
-
-- **OpenAI models**: `gpt-4`, `gpt-3.5-turbo`, `gpt-4-turbo`
-- **HuggingFace paths**: `meta-llama/Llama-3-70b-instruct-hf`
-- **Pre-registered names**: use `evaloop list_models` to see available options
-
-Large models automatically use vLLM for efficient inference when it is installed (`pip install -e ".[vllm]"`).
-
-## 📊 Results and Analysis
-
-### Output Structure
-
-Results are saved in JSON format:
-
-```json
-{
-  "model": "gpt-4",
-  "max_cycles": 10,
-  "prompt_results": [
-    {
-      "task_id": "Mbpp/2",
-      "initial_prompt": "Write a function to find the shared elements ...",
-      "cycles": [...],
-      "successful_cycles": 5,
-      "max_cycles_reached": false
-    }
-  ],
-  "average_successful_cycles": 4.2
-}
-```
-
-### Metrics
-
-`evaloop analyze` reports `ASL` (the headline score, used by default), `ASL_pow`, `ASL_bias`,
-`pass@1` and `pass_drop`. How each one is computed is described in [Scoring](#-scoring).
-
-### Visualization
-
-`evaloop analyze` writes three plots to the output directory: `asl_comparison.png` (ASL per
-model), `cycle_distribution.png` (histogram of sustained loops) and `success_heatmap.png`
-(sustained loops per task and model, first 50 tasks).
-
-## 📐 Scoring
-
-The scores below are the ones used in the paper and on the [leaderboard](https://evalooop.github.io/);
-`evaloop analyze` reproduces the published values exactly when given the same results and judge scores.
-
-### Notation
-
-- **T**: number of tasks in the run (378 for MBPP Plus).
-- **M**: maximum number of loops (`max_cycles`, 10 by default).
-- **i**: number of loops a task *sustains* (`successful_cycles` in the results file): its code passed
-  the tests in loops 1..i and failed in loop i+1. `i = 0` means it already failed in the first loop,
-  `i = M` means it never failed.
-- **n_i**: number of tasks that sustain exactly i loops.
-- **pass@k**: number of tasks that sustain at least k loops (so pass@1 is the usual one-shot pass count).
-
-### ASL: the headline score (default)
-
-```
-ASL = Σ_{i=1..M} n_i · i² · s_i / (T · M)          range [0, M]
-```
-
-- **i²** rewards sustained correctness quadratically: surviving 8 loops counts 4× as much as surviving 4.
-- **s_i** is the semantic similarity weight of bucket i. It discounts tasks whose last successful
-  loop had already drifted away from the original intent.
-
-**How s_i is obtained.** For every task with a failure boundary (`1 ≤ i < M`), an LLM judge
-compares the last successful transition with the failing one:
-
-| | Prompt | Code |
-|---|---|---|
-| Side 1 | prompt that fed loop i (the original task if i = 1, else the summary written in loop i−1) | code generated in loop i (passed) |
-| Side 2 | summary written in loop i, i.e. the prompt of loop i+1 | code generated in loop i+1 (failed) |
-
-The judge returns a score `sim ∈ [0, 1]`. A task that sustained i loops went through i prompt
-transitions; the first i−1 produced passing code, so they count as similarity 1.0, and only the
-boundary transition uses the judge score. With `m_i` the mean judge score of the tasks in bucket i:
-
-```
-s_i = (m_i + (i − 1)) / i        for 1 ≤ i < M
-s_i = 1                          for i = M (never failed) and for buckets without judge scores
-```
-
-Because the mean is linear, this equals giving every boundary task the weight `i · (i − 1 + sim)`
-instead of `i²`, so `ASL ≤ ASL_pow` and the gap is `Σ_tasks i · (1 − sim) / (T · M)`.
-
-*Example:* with T = 378 and M = 10, a task that sustains 4 loops and gets a judge score of 0.85
-contributes `4 · (3 + 0.85) / 3780 = 0.00407` to ASL, versus `16 / 3780 = 0.00423` without the
-similarity weighting.
-
-### All metrics
-
-| Metric | Formula | Range | What it measures | Leaderboard field |
-|---|---|---|---|---|
-| `ASL` | Σ n_i · i² · s_i / (T · M) | [0, M] | Headline robustness score (default) | `semanticSimilarityScore`, shown as "ASL" |
-| `ASL_pow` | Σ n_i · i² / (T · M) | [0, M] | ASL without semantic weighting (all s_i = 1) | `aslScore` |
-| `ASL_bias` | Σ n_i · i² / (pass@1 · M) | [0, M] | Robustness on the tasks the model solves at all, independent of one-shot accuracy (0 if pass@1 = 0) | `robustnessScore` |
-| `pass@1` | pass@1 / T | [0, 1] | One-shot accuracy | `successRate` |
-| `pass_drop` | (pass@1 − pass@M) / T | [0, 1] | Absolute accuracy lost within M loops | "drop" (as a percentage) |
-
-Only `ASL` needs the judge; the other metrics use the loop counts alone. The leaderboard also
-averages repeated runs of a model and only lists models with `pass@1 > 0.2` and `ASL_bias > 3`;
-those steps happen outside this package.
-
-### Similarity judge
-
-- **Default:** `gpt-4-turbo-2024-04-09` at temperature 0 with a 10-token answer budget, no system
-  message and the paper's prompt (`evaloop.analysis.similarity.DEFAULT_JUDGE_PROMPT`). Scores
-  from a different judge or prompt are not comparable with the leaderboard, so compare models
-  only under the same judge.
-- **Changing the judge:** the judge is served through the same API layer as the evaluated models
-  (`OpenAILLM`), so any OpenAI-compatible endpoint works via `--judge_model`, `--judge_base_url`
-  and `--judge_api_key(_file)`. In Python, pass `judge_config=JudgeConfig(...)` to
-  `ResultAnalyzer`, or wrap any `BaseLLM` in `SemanticSimilarityJudge(llm)` and pass it as
-  `judge=...`.
-- **Caching:** scores are stored in a sidecar next to the results file,
-  `<results stem>_<judge>_similarity_scores.json`, as
-  `{"<task_id>_cycle_<i>": {"score": ..., "input_sha256": ...}}`. The judge is only called for pairs
-  missing from the sidecar, so reruns are free and an interrupted run resumes where it stopped. No
-  API key is needed when the sidecar is complete.
-- **Cache validation:** `input_sha256` fingerprints the exact judge prompt (the four judged strings
-  rendered into the template). If a results file is overwritten (e.g. `evaluate` rerun with the same
-  `--experiment_name`) or the prompt template changes, mismatching entries are re-judged with a
-  warning instead of being mixed into the new run. Sidecars from the published data archive
-  (`{"<task_id>_cycle_<i>": score}`, no hash) are still accepted; their entries cannot be verified
-  and are used as is.
-- **Failures:** if the judge call fails or its answer cannot be parsed, the pair is stored as
-  `null`, left out of its bucket mean (with a warning), and retried on the next run
-  (`--rejudge_failed=False` keeps it as is). The original scripts recorded such failures as 0.0.
-- **Parsing:** a bare number is used directly; otherwise the first number that looks like a score
-  is taken. Results are clamped to [0, 1].
-
-### Programmatic scoring
-
-```python
-from evaloop.analysis.analyzer import ResultAnalyzer
-from evaloop.analysis.similarity import JudgeConfig
-
-analyzer = ResultAnalyzer(
-    "results/exp_results.json",
-    "results/analysis",
-    judge_config=JudgeConfig(model="gpt-4-turbo-2024-04-09", api_key="sk-..."),
-)
-results = analyzer.analyze()          # all metrics; results["ASL"]["by_model"][model_name]
-```
-
-The pure metric functions (`asl_semantic`, `asl_pow`, `asl_bias`, `pass_at_k`, `pass_drop`,
-`bucket_similarity`) live in `evaloop.analysis.metrics`.
-
-## 🧪 Advanced Usage
-
-### Custom Model Registration
-
-```python
-from evaloop.models.registry import ModelRegistry
-
-registry = ModelRegistry()
-registry.register_model("my-custom-model", {
-    "name": "my-custom-model",
-    "type": "vllm",
-    "path": "path/to/my/model",
-    "max_model_len": 4096,
-    "tensor_parallel_size": 2
-})
-```
-
-### Programmatic API
-
-```python
-from evaloop.core.config import EvaluationConfig
-from evaloop.core.evaluator import EvaLoopEvaluator
-
-config = EvaluationConfig(
-    model="gpt-4",
-    dataset="mbpp_plus",
-    max_cycles=10,
-    temperature=0.0,
-)
-
-evaluator = EvaLoopEvaluator(config)
-results = evaluator.run_code_generation_summarization()
-```
-
-### Batch Processing
-
-```bash
-# Process multiple experiments
-for model in "gpt-4" "gpt-3.5-turbo" "deepseek-coder-33b"; do
-    evaloop evaluate --model "$model" \
-                     --experiment_name "batch_${model}" \
-                     --output_dir "results/batch/"
-done
-
-# Analyze all results
-for result in results/batch/*_results.json; do
-    evaloop analyze --results_path "$result"
-done
-```
-
-## 🤝 Contributing
-
-We welcome contributions — new loop/task types especially! Please see the [Contributing Guide](CONTRIBUTING.md) for the development setup, the "add a new loop type" walkthrough, and PR expectations.
-
-### Development Setup
-
-```bash
-git clone https://github.com/evalooop/EvaLooop
-cd EvaLooop
-pip install -e ".[dev]"
-```
-
-### Running Tests
-
-```bash
-pytest
-ruff check evaloop tests
-```
-
-The unit test suite runs without GPU, API keys, or the heavy model dependencies.
-
-## 📖 Citation
-
-If you use EvaLoop in your research, please cite:
-
-```bibtex
-@article{fang2024evaloop,
-  title={EvaLoop: Assessing LLM Robustness in Programming from a Self-consistency Perspective},
-  author={Fang, Sen and Ding, Weiyuan and Xu, Bowen},
-  journal={arXiv preprint arXiv:2505.12185},
-  year={2024},
-  url={https://arxiv.org/abs/2505.12185}
-}
-```
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with [Python Fire](https://github.com/google/python-fire) for CLI interface
-- Uses [vLLM](https://github.com/vllm-project/vllm) for efficient model inference
-- Evaluation dataset from [MBPP](https://github.com/google-research/google-research/tree/master/mbpp)
-- Code testing powered by [EvalPlus](https://github.com/evalplus/evalplus)
-
-## 📞 Support
-
-- 🏆 [Leaderboard](https://evalooop.github.io/)
-- 📄 [Paper](https://arxiv.org/abs/2505.12185)
-- 🐛 [Issue Tracker](https://github.com/evalooop/EvaLooop/issues)
-
----
-
-**EvaLoop** - Robust LLM Evaluation Made Simple 🔄
+The first command uses only performed-run JSONs. The second verifies selection against supplied
+standard records, then exports the fixed audit decisions. Standard per-cycle text is never copied.
+
+CodeQwen's effect is +0.411 on 97 uncapped pairs, compared with +0.399 on all 100. Exclusion
+depends on a post-treatment variable and does not establish the direction of truncation bias.
+The language audit found 29 samples with Spanish prose and one with a minor English word;
+all 30 were predominantly Spanish. This does not establish exclusive Spanish in every summary.
+
+## Cost
+
+The billing screenshot in `evidence/cloud_billing_20261020.png` shows US$20.75 for
+14–20 October 2026, including Compute Engine US$17.63 and Persistent Disk US$3.01.
+This supersedes the earlier approximate $6 estimate. I forgot to turn off the VM after the
+experiment, so it kept running and added charges beyond the evaluation itself. The displayed
+total exceeds the planned $10 budget. The screenshot does not show project filters or separate
+active experiment costs from idle charges, so the exact experiment-only cost is unavailable.
+Accepted generation time is 11.22 hours and excludes loading, tests, idle time, and interrupted
+work. The screenshot does not establish the current VM or disk status.
+
+## Rebuild the report
+
+Install `python-docx==1.2.0`, then run `python scripts/build_report.py --output report.docx`.
+Export the document to PDF in Word or LibreOffice and confirm that it remains three pages.
+The report source contains the values verified by the analysis above.
+
+## Changes to the framework
+
+The existing generation and testing modules are unchanged. The extension adds prompts,
+extraction, wrapper logic, and metrics under `evaloop/extensions/`, plus runners, analysis,
+and reporting scripts under `scripts/`. The README explains the new workflow. The patch
+contains all changes relative to upstream `dev`.
+
+## Main result
+
+The pooled Spanish-minus-English ASL estimate is -0.074 with a task-bootstrap 95% confidence
+interval of [-0.432, 0.294]. Effects differ by model, and no model-level confidence interval
+excludes zero. Lingua classifies 100% of Spanish summaries as Spanish, and cycle-1 disagreement between the new
+arms is zero for all three models.
